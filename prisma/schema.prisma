@@ -1,0 +1,326 @@
+// Prisma Schema for Course Affiliate Marketing Platform
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  MARKETER
+  STUDENT
+}
+
+enum MarketerStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+enum CourseStatus {
+  DRAFT
+  PUBLISHED
+  ARCHIVED
+}
+
+enum OrderStatus {
+  PENDING_PAYMENT
+  PAYMENT_REVIEW
+  PAID
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentStatus {
+  SUBMITTED
+  APPROVED
+  REJECTED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  BKASH_SEND_MONEY
+  BKASH_MERCHANT
+}
+
+enum CommissionStatus {
+  PENDING
+  APPROVED
+  PAID
+  REVERSED
+}
+
+enum CommissionType {
+  PERCENTAGE
+  FIXED
+}
+
+enum PayoutStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  PROCESSING
+  PAID
+}
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String
+  passwordHash String
+  role         UserRole  @default(STUDENT)
+  phone        String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  marketerProfile  MarketerProfile?
+  orders           Order[]           @relation("CustomerOrders")
+  enrollments      Enrollment[]
+  reviewedPayments Payment[]         @relation("AdminReviewedPayments")
+  reviewedPayouts  Payout[]          @relation("AdminReviewedPayouts")
+  auditLogs        AuditLog[]        @relation("UserAuditLogs")
+
+  @@index([email])
+  @@index([role])
+}
+
+model MarketerProfile {
+  id                 String         @id @default(cuid())
+  userId             String         @unique
+  user               User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  status             MarketerStatus @default(PENDING)
+  referralCode       String         @unique
+  phone              String
+  socialLinks        String?
+  applicationReason  String
+  reviewNote         String?
+  reviewedAt         DateTime?
+  reviewedById       String?
+  payoutBkashNumber  String?
+  payoutMethod       PaymentMethod  @default(BKASH_SEND_MONEY)
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  affiliateLinks  AffiliateLink[]
+  affiliateClicks AffiliateClick[]
+  attributedOrders Order[]          @relation("MarketerAttributedOrders")
+  commissions     Commission[]
+  payouts         Payout[]
+
+  @@index([status])
+  @@index([referralCode])
+}
+
+model Course {
+  id               String         @id @default(cuid())
+  title            String
+  slug             String         @unique
+  shortDescription String
+  description      String
+  thumbnailUrl     String?
+  price            Decimal        @db.Decimal(10, 2)
+  commissionType   CommissionType @default(PERCENTAGE)
+  commissionRate   Decimal        @default(20.00) @db.Decimal(5, 2)
+  status           CourseStatus   @default(DRAFT)
+  category         String         @default("General")
+  instructorName   String         @default("Lead Instructor")
+  curriculum       String?        // JSON string of modules & lessons
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  orders          Order[]
+  enrollments     Enrollment[]
+  affiliateClicks AffiliateClick[]
+  commissions     Commission[]
+  affiliateLinks  AffiliateLink[]
+
+  @@index([slug])
+  @@index([status])
+  @@index([category])
+}
+
+model AffiliateLink {
+  id          String   @id @default(cuid())
+  marketerId  String
+  marketer    MarketerProfile @relation(fields: [marketerId], references: [id], onDelete: Cascade)
+  courseId    String?
+  course      Course?  @relation(fields: [courseId], references: [id], onDelete: SetNull)
+  code        String   @unique
+  customSlug  String?
+  createdAt   DateTime @default(now())
+
+  @@index([code])
+}
+
+model AffiliateClick {
+  id           String   @id @default(cuid())
+  marketerId   String
+  marketer     MarketerProfile @relation(fields: [marketerId], references: [id], onDelete: Cascade)
+  courseId     String?
+  course       Course?  @relation(fields: [courseId], references: [id], onDelete: SetNull)
+  referralCode String
+  ipHash       String?
+  userAgent    String?
+  visitedAt    DateTime @default(now())
+  converted    Boolean  @default(false)
+  orderId      String?
+
+  @@index([marketerId, visitedAt])
+  @@index([referralCode])
+  @@index([courseId])
+}
+
+model Order {
+  id                       String      @id @default(cuid())
+  orderNumber              String      @unique
+  customerId               String
+  customer                 User        @relation("CustomerOrders", fields: [customerId], references: [id], onDelete: Restrict)
+  courseId                 String
+  course                   Course      @relation(fields: [courseId], references: [id], onDelete: Restrict)
+  amount                   Decimal     @db.Decimal(10, 2)
+  status                   OrderStatus @default(PENDING_PAYMENT)
+  affiliateId              String?
+  affiliate                MarketerProfile? @relation("MarketerAttributedOrders", fields: [affiliateId], references: [id], onDelete: SetNull)
+  referralAttributionType  String?     @default("COOKIE_LAST_CLICK")
+  createdAt                DateTime    @default(now())
+  updatedAt                DateTime    @updatedAt
+
+  payments    Payment[]
+  enrollment  Enrollment?
+  commission  Commission?
+
+  @@index([orderNumber])
+  @@index([customerId])
+  @@index([courseId])
+  @@index([affiliateId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Payment {
+  id              String        @id @default(cuid())
+  orderId         String
+  order           Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  paymentMethod   PaymentMethod @default(BKASH_SEND_MONEY)
+  senderNumber    String
+  transactionId   String        @unique
+  amount          Decimal       @db.Decimal(10, 2)
+  note            String?
+  status          PaymentStatus @default(SUBMITTED)
+  reviewedById    String?
+  reviewedBy      User?         @relation("AdminReviewedPayments", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt      DateTime?
+  rejectionReason String?
+  internalNote    String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([transactionId])
+  @@index([orderId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Enrollment {
+  id              String   @id @default(cuid())
+  studentId       String
+  student         User     @relation(fields: [studentId], references: [id], onDelete: Restrict)
+  courseId        String
+  course          Course   @relation(fields: [courseId], references: [id], onDelete: Restrict)
+  orderId         String   @unique
+  order           Order    @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  accessGrantedAt DateTime @default(now())
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([studentId, courseId])
+  @@index([studentId])
+  @@index([courseId])
+}
+
+model Commission {
+  id               String           @id @default(cuid())
+  orderId          String           @unique
+  order            Order            @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  marketerId       String
+  marketer         MarketerProfile  @relation(fields: [marketerId], references: [id], onDelete: Restrict)
+  courseId         String
+  course           Course           @relation(fields: [courseId], references: [id], onDelete: Restrict)
+  basePrice        Decimal          @db.Decimal(10, 2)
+  commissionRate   Decimal          @db.Decimal(5, 2)
+  commissionAmount Decimal          @db.Decimal(10, 2)
+  status           CommissionStatus @default(APPROVED)
+  payoutId         String?
+  payout           Payout?          @relation(fields: [payoutId], references: [id], onDelete: SetNull)
+  reversedAt       DateTime?
+  reversalReason   String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@index([marketerId, status])
+  @@index([courseId])
+  @@index([payoutId])
+}
+
+model Payout {
+  id                   String        @id @default(cuid())
+  payoutNumber         String        @unique
+  marketerId           String
+  marketer             MarketerProfile @relation(fields: [marketerId], references: [id], onDelete: Restrict)
+  requestedAmount      Decimal       @db.Decimal(10, 2)
+  settledAmount        Decimal?      @db.Decimal(10, 2)
+  paymentMethod        PaymentMethod @default(BKASH_SEND_MONEY)
+  recipientPhone       String
+  status               PayoutStatus  @default(REQUESTED)
+  transactionReference String?
+  reviewedById         String?
+  reviewedBy           User?         @relation("AdminReviewedPayouts", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewedAt           DateTime?
+  rejectionReason      String?
+  adminNote            String?
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+
+  items Commission[]
+
+  @@index([marketerId])
+  @@index([status])
+  @@index([payoutNumber])
+}
+
+model PlatformSetting {
+  id                     String   @id @default("default")
+  organizationName       String   @default("CourseCraft Academy")
+  supportEmail           String   @default("support@coursecraft.com")
+  contactPhone           String   @default("+880 1700-000000")
+  bkashNumber            String   @default("01700000000")
+  bkashType              PaymentMethod @default(BKASH_MERCHANT)
+  bkashInstructions      String   @default("1. Open bKash App\n2. Select Make Payment (or Send Money as indicated)\n3. Enter the bKash Number shown above\n4. Enter the exact Course Fee\n5. Use your Order ID as the Reference\n6. Enter your PIN and confirm\n7. Copy the TrxID and submit it below.")
+  defaultAttributionDays Int      @default(30)
+  minimumPayoutAmount    Decimal  @default(1000.00) @db.Decimal(10, 2)
+  updatedAt              DateTime @updatedAt
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  actorId    String?
+  actor      User?    @relation("UserAuditLogs", fields: [actorId], references: [id], onDelete: SetNull)
+  action     String
+  entityType String
+  entityId   String
+  details    String?  // JSON string of before/after or payload
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  @@index([actorId])
+  @@index([action])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
